@@ -32,7 +32,7 @@ using System.Reactive.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
-using Gml.Client.Exceptions;
+using Gml.Client.Extensions;
 using Gml.Client.Interfaces;
 using Gml.Dto.Messages;
 using Gml.Dto.News;
