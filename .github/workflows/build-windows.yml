@@ -1,0 +1,76 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [ "new-ci", "main" ]
+  workflow_dispatch:
+    inputs:
+      self_contained:
+        description: 'Publish self-contained'
+        required: true
+        default: true
+        type: boolean
+      build_arm:
+        description: 'Build for ARM64'
+        required: true
+        default: true
+        type: boolean
+
+env:
+  IS_SELF_CONTAINED: ${{ inputs.self_contained || 'true' }}
+  PROJECT_PATH: src/Gml.Launcher/Gml.Launcher.csproj
+
+jobs:
+  define-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          RIDS='["win-x64"]'
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" || "${{ inputs.build_arm }}" == "true" ]]; then
+            RIDS='["win-x64", "win-arm64"]'
+          fi
+          echo "matrix={\"rid\": $RIDS}" >> $GITHUB_OUTPUT
+
+  build:
+    needs: define-matrix
+    runs-on: windows-latest
+    strategy:
+      matrix: ${{ fromJson(needs.define-matrix.outputs.matrix) }}
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+
+    - name: Publish
+      run: |
+        $startTime = Get-Date
+        dotnet publish $env:PROJECT_PATH -c Release -r ${{ matrix.rid }} --self-contained $env:IS_SELF_CONTAINED -p:PublishSingleFile=true -o ./publish/${{ matrix.rid }}
+        $endTime = Get-Date
+        $duration = $endTime - $startTime
+        echo "BUILD_DURATION=$($duration.TotalSeconds)" >> $env:GITHUB_ENV
+
+    - name: Generate Report
+      run: |
+        $size = (Get-ChildItem ./publish/${{ matrix.rid }} -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
+        $report = "Build Report for Windows (${{ matrix.rid }})`n"
+        $report += "-----------------------------------`n"
+        $report += "Build Duration: $($env:BUILD_DURATION) seconds`n"
+        $report += "Total Size: $($size.ToString("N2")) MB`n"
+        $report += "Self Contained: $($env:IS_SELF_CONTAINED)`n"
+        $report | Out-File ./publish/${{ matrix.rid }}/build_report.txt
+        Get-Content ./publish/${{ matrix.rid }}/build_report.txt
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Gml.Launcher-${{ matrix.rid }}
+        path: ./publish/${{ matrix.rid }}

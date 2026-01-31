@@ -1,0 +1,74 @@
+name: Build Linux
+
+on:
+  push:
+    branches: [ "new-ci", "main" ]
+  workflow_dispatch:
+    inputs:
+      self_contained:
+        description: 'Publish self-contained'
+        required: true
+        default: true
+        type: boolean
+      build_arm:
+        description: 'Build for ARM64'
+        required: true
+        default: true
+        type: boolean
+
+env:
+  IS_SELF_CONTAINED: ${{ inputs.self_contained || 'true' }}
+  PROJECT_PATH: src/Gml.Launcher/Gml.Launcher.csproj
+
+jobs:
+  define-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          RIDS='["linux-x64"]'
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" || "${{ inputs.build_arm }}" == "true" ]]; then
+            RIDS='["linux-x64", "linux-arm64"]'
+          fi
+          echo "matrix={\"rid\": $RIDS}" >> $GITHUB_OUTPUT
+
+  build:
+    needs: define-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.define-matrix.outputs.matrix) }}
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+
+    - name: Publish
+      run: |
+        start_time=$(date +%s)
+        dotnet publish $PROJECT_PATH -c Release -r ${{ matrix.rid }} --self-contained $IS_SELF_CONTAINED -p:PublishSingleFile=true -o ./publish/${{ matrix.rid }}
+        end_time=$(date +%s)
+        echo "BUILD_DURATION=$((end_time - start_time))" >> $GITHUB_ENV
+
+    - name: Generate Report
+      run: |
+        size=$(du -sh ./publish/${{ matrix.rid }} | cut -f1)
+        echo "Build Report for Linux (${{ matrix.rid }})" > ./publish/${{ matrix.rid }}/build_report.txt
+        echo "-----------------------------------" >> ./publish/${{ matrix.rid }}/build_report.txt
+        echo "Build Duration: $BUILD_DURATION seconds" >> ./publish/${{ matrix.rid }}/build_report.txt
+        echo "Total Size: $size" >> ./publish/${{ matrix.rid }}/build_report.txt
+        echo "Self Contained: $IS_SELF_CONTAINED" >> ./publish/${{ matrix.rid }}/build_report.txt
+        cat ./publish/${{ matrix.rid }}/build_report.txt
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Gml.Launcher-${{ matrix.rid }}
+        path: ./publish/${{ matrix.rid }}
